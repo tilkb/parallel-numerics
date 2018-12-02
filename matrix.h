@@ -93,6 +93,42 @@ class Matrix{
             return true;
         }
 
+        void zero(){
+            for (int i=0;i<this->row*this->column;i++){
+                this->data[i] = 0.0;
+                
+            }
+        }
+        void clone_data(Matrix* from){
+            for (int i=0;i<from->row;i++){
+                for (int j=0;j<from->column;j++){
+                    this->set(i,j,from->get(i,j));
+                }
+            }
+        }
+        void set_subMatrix(int row_from, int column_from, Matrix* submatrix){
+            for (int i=0; i<submatrix->row;i++){
+                for (int j=0; j<submatrix->column;j++){
+                    this->set(row_from+i,column_from+j,submatrix->get(i,j));
+                }
+
+            }
+        }
+
+        Matrix get_subMatrix(int row_from,int row_nr,int column_from, int column_nr){
+            if ((row_from<0) || (row_from+row_nr-1>=(this->row)) || (column_from<0) || (column_from+column_nr-1>=(this->column))){
+                throw std::invalid_argument( "Out of range");
+            }
+            Matrix result(row_nr, column_nr);
+            for (int i=0; i<row_nr;i++){
+                for (int j=0; j<column_nr;j++){
+                    result.set(i,j,this->get(row_from+i,column_from+j));
+                }
+
+            }
+            return result;
+        }
+
 
         float get(const int x,const int y){
             if ((x<0) || (x>=(this->row)) || (y<0) || (y>=(this->column))){

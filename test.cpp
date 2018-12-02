@@ -19,6 +19,29 @@ void test_multiply(int numberOfProcessors, int rank, int row, int col, int k){
     }
 }
 
+void test_decomposition(int n, int numberOfProcessors, int rank){
+    Matrix m(n,n);
+    m.init_random();
+    Matrix L(n,n);
+    Matrix U(n,n);
+    if (rank==0){
+        uBLAS::naive_LU(&m, &L, &U);
+        Matrix m2 = uBLAS::vectorization_multiply(&L,&U);
+        assert(m.equals(&m2));
+        m.init_random();
+        uBLAS::GAXPY_LU(&m, &L, &U);
+        Matrix m3 = uBLAS::vectorization_multiply(&L,&U);
+        assert(m.equals(&m3));
+        m.init_random();
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    uBLAS::parallel_LU(&m, &L, &U, numberOfProcessors, rank);
+    if (rank==0){
+        Matrix m2 = uBLAS::vectorization_multiply(&L,&U);
+        assert(m.equals(&m2));
+    }
+}
+
 
 int main(int argc, char *argv[]){
     MPI_Init(&argc, &argv);
@@ -29,6 +52,9 @@ int main(int argc, char *argv[]){
     test_multiply(numberOfProcessors, rank,41,41,41);
     test_multiply(numberOfProcessors, rank, 3,3,3);
     test_multiply(numberOfProcessors, rank,21,43,21);
+    test_decomposition(60,numberOfProcessors, rank);
+    test_decomposition(3,numberOfProcessors, rank);
+    test_decomposition(48,numberOfProcessors, rank);
     if (rank==0){
         std::cout<<"OK"<<std::endl;
     }

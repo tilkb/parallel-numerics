@@ -72,6 +72,7 @@ class uBLAS{
             if (a->column!=b->row){
                 throw std::invalid_argument("Dimension mismatch");
             }
+            b->modify_storing_style(store_style::column);
             Matrix result = Matrix(a->row, b->column);
             //determine the optimal number of processors in vertical direction with some heuristics.
             //Heuristics: minimize the difference between the biggest and the smallest block + "shapedistance" from square blocks
@@ -175,13 +176,106 @@ class uBLAS{
         }
         
 
-        // LU Matrix decomposition: Gauss elimination
-        static void LU(const Matrix *a, ){
-
+        // LU Matrix decomposition: Gauss elimination, return the P(permutation), L (lower tridiagonal) and U(upper tridiagonal) matrix
+        static void naive_LU(Matrix *original,Matrix* L, Matrix* U){
+            //work on U matrix
+            U->clone_data(original);
+            L->zero();
+            for (int row=0;row<U->row;row++){
+                //main diagonal
+                L->set(row,row,1);
+                for (int temp_row=row+1;temp_row<U->row;temp_row++){
+                    float ratio= U->get(temp_row,row) / U->get(row,row);
+                    L->set(temp_row,row,ratio);
+                    U->set(temp_row,row,0.0);
+                    for (int col=row+1;col<original->column;col++){
+                        float new_value = U->get(temp_row, col) - ratio * U->get(row, col);
+                        U->set(temp_row, col, new_value);
+                    }
+                }
+            }
         }
-        //parallel LU decomposition
-        static void parallel_LU(const Matrix *a){
 
+        static void GAXPY_LU(Matrix *original, Matrix* L, Matrix* U){
+            U->clone_data(original);
+            L->zero();
+            L->set(0,0,1);
+            for (int temp_row=1;temp_row<U->row;temp_row++){
+                L->set(temp_row,temp_row,1);
+                for (int row=0;row<temp_row;row++){
+                    //main diagonal
+                           
+                        float ratio= U->get(temp_row,row) / U->get(row,row);
+                        L->set(temp_row,row,ratio);
+                        U->set(temp_row,row,0.0);
+                        for (int col=row+1;col<original->column;col++){
+                            float new_value = U->get(temp_row, col) - ratio * U->get(row, col);
+                            U->set(temp_row, col, new_value);
+                        }
+                    }
+                
+            }
+        }
+
+        //parallel LU decomposition
+        static void parallel_LU(Matrix *original, Matrix* L, Matrix* U, int numberOfProcessors, int rank){
+            U->clone_data(original);
+            L->zero();
+            int block_size=24;
+            int from_corner = 0;
+            for (int row=0;row+block_size<original->column;row=row+block_size){
+                from_corner=row+block_size;
+                Matrix block_original = U->get_subMatrix(row,block_size,row, block_size);
+                Matrix U11(block_size, block_size);
+                Matrix L11(block_size, block_size);
+                uBLAS::GAXPY_LU(&block_original, &L11, &U11);
+                L->set_subMatrix(row,row,&L11);
+                U->set_subMatrix(row,row,&U11);
+                Matrix U12(block_size, original->column-row-block_size);
+                Matrix L21(original->row-row-block_size, block_size);
+                //calc row and col
+                if (rank==0){
+                    for (int col_L=0;col_L<block_size;col_L++){
+                        for (int row_L=0; row_L+row+block_size<L->row;row_L++){
+                            float value=U->get(row+block_size+row_L,row+col_L);
+                            for (int k=0;k<col_L;k++){
+                                value-= L21.get(row_L,k) * U11.get(k,col_L);
+                            }
+                            L21.set(row_L,col_L,value  / U11.get(col_L,col_L));
+                            //zero U in he right postion
+                            U->set(row+block_size+row_L,row+col_L,0.0);
+                        }
+                    }
+
+                    for (int row_U=0;row_U<block_size;row_U++){
+                        for (int col_U=0; col_U+row+block_size<L->column;col_U++){
+                            float value=U->get(row+row_U,row+block_size + col_U);
+                            for (int k=0;k<row_U;k++){
+                                value-= U12.get(k,col_U) * L11.get(row_U,k);
+                            }
+                            U12.set(row_U,col_U,value  / L11.get(row_U,row_U));
+                        }
+                    }
+
+                
+                    U->set_subMatrix(row,row+block_size,&U12);
+                    L->set_subMatrix(row+block_size,row,&L21);
+                }
+                Matrix temp = uBLAS::parallel_multiply(&L21, &U12,numberOfProcessors, rank);
+                //minus part
+                for (int i=0;i<temp.row;i++){
+                    for (int j=0;j<temp.column;j++){
+                        U->set(row+block_size+i,row+block_size+j, U->get(row+block_size+i,row+block_size+j)-temp.get(i,j));
+                    }
+                }
+
+            }
+            Matrix corner = U->get_subMatrix(from_corner,original->row-from_corner, from_corner, original->column-from_corner);
+            Matrix L_corner(original->row - from_corner, original->column - from_corner);
+            Matrix U_corner(original->row - from_corner, original->column - from_corner);
+            uBLAS::GAXPY_LU(&corner,&L_corner,&U_corner);
+            L->set_subMatrix(from_corner,from_corner,&L_corner);
+            U->set_subMatrix(from_corner,from_corner,&U_corner);
         }
 
 
