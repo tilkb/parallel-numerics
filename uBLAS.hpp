@@ -279,8 +279,180 @@ class uBLAS{
         }
 
 
-        //QR decomposition: Gram-Smith orthogonalization
-        static void QR(const Matrix a){
+        //QR decomposition: Gram-Schmidt orthogonalization
+        static void QR(Matrix* a,Matrix* Q, Matrix* R){
+            R->zero();
+            Q->clone_data(a);
+            for (int i=0;i<a->column;i++){
+                for (int j=0;j<i;j++){
+                    //calculate the projections
+                    float nominator=0;
+                    float denominator=0;
+                    for(int k=0;k<a->row;k++){
+                       nominator+= Q->get(k,i) * Q->get(k,j);
+                       denominator+=Q->get(k,j) * Q->get(k,j);
+                    }
+                    float ratio = nominator / denominator;
+                    //decrease the vector
+                    for(int k=0;k<a->row;k++){
+                        Q->set(k,i,Q->get(k,i) - ratio * Q->get(k,j));
+                    }
+                    R->set(j,i,ratio);
+
+                }
+                //make vector length to 1
+                float vec_len=0;
+                for(int k=0;k<Q->row;k++){
+                    vec_len+=Q->get(k,i)*Q->get(k,i);
+                }
+                vec_len=sqrt(vec_len);
+                for(int k=0;k<Q->row;k++){
+                    Q->set(k,i,Q->get(k,i)/vec_len);
+                }
+                R->set(i,i,vec_len);
+            }
+        }
+        //QR decomposition: Hausholder orthogonalization
+        static void QR_hausholder(Matrix* a,Matrix* Q, Matrix* R, int numberOfProcessors, int rank){
+            R->clone_data(a);
+            //make it identical
+            Matrix I(Q->row,Q->column);
+            Q->zero();
+            I.zero();
+            for (int i=0;i<Q->column;i++){
+                I.set(i,i,1.0);
+                Q->set(i,i,1.0);
+            }
+            for (int i=0;i<a->column;i++){
+                //calculate the correct Hausholder matrix
+                Matrix v(a->row,1);
+                for (int k=0;k<a->row;k++){
+                    v.data[k]=a->get(k,i);
+                }
+                // -alpha*e part
+                v.data[i]= v.data[i] - v.get_vector_norm();
+
+                v.normalize_vector();
+                Matrix v_t(v.row,v.column);
+                v_t.clone_data(&v);
+                v_t.transpose();
+                Matrix outer_product = uBLAS::vectorization_multiply(&v,&v_t);
+                outer_product.const_multiply(2.0);
+                Matrix H = I- outer_product;
+                Matrix R_temp = uBLAS::parallel_multiply(&H,R, numberOfProcessors, rank);
+                R->clone_data(&R_temp);
+
+                Matrix Q_temp = uBLAS::parallel_multiply(Q,&H, numberOfProcessors, rank);
+                Q->clone_data(&Q_temp);
+            }
+
+        }
+
+        static Matrix jacobi_iteration(Matrix* A, Matrix* b){
+            float eps=0.0000001;
+            //optimize for sparse diagonal inverse
+            float D_1[A->row];
+            for (int i = 0;i < A->row;i++){
+                D_1[i] = 1.0 / A->get(i,i);
+            }
+            Matrix x(A->row,1);
+            x.zero();
+
+            Matrix LU(A->row,A->column);
+            LU.clone_data(A);
+            for (int i = 0;i < A->row;i++){
+                LU.set(i,i,0.0) ;
+            }
+
+            int iteration=0;
+            bool need_iter=true;
+            while(iteration<1000 && need_iter){
+                need_iter=false;
+                Matrix temp = uBLAS::vectorization_multiply(&LU, &x);
+                for (int i=0;i<b->row;i++){
+                    float x_new = (b->get(i,0)-temp.get(i,0))*D_1[i];
+                    if (abs(x.get(i,0)-x_new)>eps){
+                        need_iter=true;
+                    }
+                    x.set(i,0,x_new);
+                }
+                iteration++;
+            }
+            return x;
+            
+        }
+
+        static Matrix gradient_method(Matrix* A, Matrix* b){
+            float eps=0.0003;
+            Matrix x(A->row,1);
+            x.zero();
+            int iteration=0;
+            while(iteration<2000){
+                Matrix d = (*b)-uBLAS::vectorization_multiply(A, &x);
+                Matrix d_t(A->row,1);
+                d_t.clone_data(&d);
+                d_t.transpose();
+                //calculate stepsize
+                Matrix temp = uBLAS::vectorization_multiply(A, &d);
+                float nominator = uBLAS::vectorization_multiply(&d_t,&d).get(0,0);
+                float alpha = nominator / uBLAS::vectorization_multiply(&d_t, &temp).get(0,0);
+                bool small_err=true;
+                //check convergence
+                for(int i=0;i<d.row;i++){
+                    if (abs(d.data[i])>eps)
+                        small_err=false;
+                }
+                if (small_err){
+                    return x;
+                }
+                for (int i=0;i<d.row;i++){
+                    d.data[i]*=alpha;
+                    x.data[i]+=d.data[i];
+                }
+                iteration++;
+
+            }
+            return x;
+        }
+
+        static Matrix conjugate_gradient_method(Matrix* A, Matrix* b){
+            float eps=0.0001;
+            Matrix x(A->row,1);
+            x.zero();
+            Matrix p =(*b)-uBLAS::vectorization_multiply(A, &x);
+            Matrix r(p.row,p.column);
+            r.clone_data(&p);
+            int iteration=0;
+            while(iteration<1000){
+                Matrix p_t(p.row,1);
+                p_t.clone_data(&p);
+                p_t.transpose();
+                Matrix r_t(r.row,1);
+                r_t.clone_data(&r);
+                r_t.transpose();
+                float nominator = uBLAS::vectorization_multiply(&r_t,&r).get(0,0);
+                Matrix temp = uBLAS::vectorization_multiply(A, &p);
+                float alpha = - nominator / uBLAS::vectorization_multiply(&p_t, &temp).get(0,0);
+                for (int i=0;i<x.row;i++){
+                    x.data[i]-=p.data[i] *alpha;
+                    r.data[i]+=alpha * temp.data[i];
+                }
+                //calculate inner product of r,rT
+                float new_nominator = 0;
+                for (int i=0;i<r.row;i++)
+                    new_nominator+=r.data[i]*r.data[i];
+
+                if (new_nominator<eps){
+                    return x;
+                }
+                float beta = new_nominator /nominator;
+                for (int i=0;i<p.row;i++){
+                    p.data[i]=beta*p.data[i] + r.data[i];
+                }
+                iteration++;
+
+            }
+            return x;
 
         }
 

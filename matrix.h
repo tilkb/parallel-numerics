@@ -15,9 +15,18 @@ class Matrix{
             this->row = row;
             this->column = column;
             //provide 32 bit alignment
-            this->data = static_cast<float*>(_mm_malloc(sizeof(float) * row*column , 32));
+            this->data = static_cast<float*>(_mm_malloc(sizeof(float) * row*column , 32));  //direct access can make it faster... need for Intel vector operations
             this->storing = store_style::row;
         };
+
+        Matrix(const Matrix &m){
+            this->row = m.row;
+            this->column = m.column;
+            this->storing = m.storing;
+            this->data = static_cast<float*>(_mm_malloc(sizeof(float) * m.row*m.column , 32));  
+            memcpy ( this->data, m.data, sizeof(float)*m.row*m.column);
+            this->storing = store_style::row;
+        }
 
         void modify_storing_style(store_style store){
             if (this->storing == store_style::row  && store == store_style::column){
@@ -57,11 +66,23 @@ class Matrix{
         void init_random(){
             std::mt19937 rng;
             rng.seed(std::random_device()());
-            std::uniform_real_distribution<> generator(-100,100);
+            std::uniform_real_distribution<> generator(-20,20);
             for (int i=0;i<this->row;i++){
                 for (int j=0;j<this->column;j++){
                     float rand = generator(rng);
                     this->set(i,j,rand);
+                }
+            }
+        }
+        void init_SPD(){
+            std::mt19937 rng;
+            rng.seed(std::random_device()());
+            std::uniform_real_distribution<> generator(0.001,20);
+            for (int i=0;i<this->row;i++){
+                for (int j=0;j<=i;j++){
+                    float rand = generator(rng);
+                    this->set(i,j,rand);
+                    this->set(j,i,rand);
                 }
             }
         }
@@ -100,11 +121,8 @@ class Matrix{
             }
         }
         void clone_data(Matrix* from){
-            for (int i=0;i<from->row;i++){
-                for (int j=0;j<from->column;j++){
-                    this->set(i,j,from->get(i,j));
-                }
-            }
+            memcpy(this->data,from->data,sizeof(float)*this->row*this->column);
+            this->storing=from->storing;
         }
         void set_subMatrix(int row_from, int column_from, Matrix* submatrix){
             for (int i=0; i<submatrix->row;i++){
@@ -152,6 +170,55 @@ class Matrix{
                 this->data[x + y *this->row] = value;
             }
             
+        }
+
+        Matrix operator+(Matrix m2){
+            if ((this->row!=m2.row) && (this->column!=m2.column)){
+                throw std::invalid_argument("Size doesn't match");
+            }
+            Matrix result(this->row,this->column);
+            for (int i=0;i<this->row;i++){
+                for (int j=0;j<this->column;j++){
+                    result.set(i,j,this->get(i,j)+m2.get(i,j));
+                }
+            }
+            return result;
+        }
+
+        Matrix operator-(Matrix m2){
+            if ((this->row!=m2.row) && (this->column!=m2.column)){
+                throw std::invalid_argument("Size doesn't match");
+            }
+            Matrix result(this->row,this->column);
+            for (int i=0;i<this->row;i++){
+                for (int j=0;j<this->column;j++){
+                    result.set(i,j,this->get(i,j)-m2.get(i,j));
+                }
+            }
+            return result;
+        }
+        float get_vector_norm(){
+            float vec_len=0;
+            for(int k=0;k<this->row*this->column;k++){
+                vec_len+=this->data[k] * this->data[k];
+            }
+            vec_len=sqrt(vec_len);
+            return vec_len;
+        }
+
+        ///make vector norm 1 in place
+        void normalize_vector(){
+            float vec_len= this->get_vector_norm();
+            for(int k=0;k<this->row*this->column;k++){
+                this->data[k]=this->data[k] / vec_len;
+            }
+        }
+
+        //in place: A=alpha*A
+        void const_multiply(const float alpha){
+            for(int k=0;k<this->row*this->column;k++){
+                this->data[k]*=alpha;
+            }
         }
 
         ~Matrix(){

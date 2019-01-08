@@ -42,6 +42,64 @@ void test_decomposition(int n, int numberOfProcessors, int rank){
     }
 }
 
+void test_iterative_solver(int n){
+    Matrix A(n,n); 
+    //push spectral norm down + make it symetric positive definite(SPD)
+    A.init_SPD();
+    for (int i=0;i<n;i++){
+        A.set(i,i,A.get(i,i)*50);
+    }
+    Matrix b(n,1);
+    b.init_random();
+    Matrix x = uBLAS::jacobi_iteration(&A, &b);
+    Matrix b_projected = uBLAS::vectorization_multiply(&A,&x);
+    assert(b_projected.equals(&b));
+
+    Matrix x2 = uBLAS::gradient_method(&A, &b);
+    Matrix b_projected2 = uBLAS::vectorization_multiply(&A,&x2);
+    assert(b_projected2.equals(&b));
+
+    Matrix x3 = uBLAS::conjugate_gradient_method(&A, &b);
+    Matrix b_projected3 = uBLAS::vectorization_multiply(&A,&x3);
+    assert(b_projected3.equals(&b));
+}
+bool is_orthonormal(Matrix* Q){
+    Matrix Q_T(Q->row,Q->column);
+    Q_T.clone_data(Q);
+    Q_T.transpose();
+    Matrix QI = uBLAS::vectorization_multiply(&Q_T, Q);
+    Matrix I(Q->row,Q->column);
+    I.zero();
+    for (int i = 0; i<Q->row;i++){
+        I.set(i,i,1.0);
+    }
+    return (I.equals(&QI));
+}
+
+
+void test_QR(int n, int numberOfProcessors, int rank){
+    Matrix m(n,n);
+    m.init_random();
+    Matrix Q(n,n);
+    Matrix R(n,n);
+    uBLAS::QR(&m, &Q, &R);
+    Matrix result = uBLAS::vectorization_multiply(&Q,&R);
+    assert(result.equals(&m));
+    //check the orthonormal matrix
+    assert(is_orthonormal(&Q));
+
+
+    Q.init_random();
+    R.init_random();
+    uBLAS::QR_hausholder(&m, &Q, &R,numberOfProcessors, rank);
+    if (rank==0){
+        Matrix result2 = uBLAS::vectorization_multiply(&Q,&R);
+        assert(result2.equals(&m));
+        //check the orthonormal matrix
+        assert(is_orthonormal(&Q));
+    }
+}
+
 
 int main(int argc, char *argv[]){
     MPI_Init(&argc, &argv);
@@ -55,6 +113,14 @@ int main(int argc, char *argv[]){
     test_decomposition(60,numberOfProcessors, rank);
     test_decomposition(3,numberOfProcessors, rank);
     test_decomposition(48,numberOfProcessors, rank);
+    test_QR(1,numberOfProcessors, rank);
+    test_QR(2,numberOfProcessors, rank);
+    test_QR(20,numberOfProcessors, rank);
+    if (rank==0){
+        test_iterative_solver(1);
+        test_iterative_solver(5); 
+        test_iterative_solver(20); 
+    }
     if (rank==0){
         std::cout<<"OK"<<std::endl;
     }
