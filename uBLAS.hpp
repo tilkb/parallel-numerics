@@ -3,6 +3,7 @@
 #include <immintrin.h>
 #include "mpi.h"
 #include "matrix.h"
+#include <assert.h>
 
 class uBLAS{
     public:
@@ -14,11 +15,11 @@ class uBLAS{
             Matrix result = Matrix(a->row, b->column);
             for (int i=0;i < a->row;i++){
                 for (int j=0;j< b->column;j++){
-                    float temp = 0.0;
+                    float dot_product = 0.0;
                     for (int k=0;k< a->column;k++){
-                       temp += a->get(i,k) * b->get(k,j);
+                       dot_product += a->get(i,k) * b->get(k,j);
                     }
-                    result.set(i,j,temp);
+                    result.set(i,j,dot_product);
                 }
             }
             return result;
@@ -155,8 +156,8 @@ class uBLAS{
                 countC[r]=local_size_A[r] *local_size_B[r];
                 posC[r]=posC[r-1]+countC[r-1];
             }
-            float temp[result.row*result.column];
-            MPI_Gatherv(C.data, C.row * C.column, MPI_FLOAT,temp, countC, posC,MPI_FLOAT, 0, MPI_COMM_WORLD);
+            float copy_area[result.row*result.column];
+            MPI_Gatherv(C.data, C.row * C.column, MPI_FLOAT,copy_area, countC, posC,MPI_FLOAT, 0, MPI_COMM_WORLD);
             if (rank==0){
                 int col_pos=0;
                 for (int r=0;r<numberOfProcessors;r++){
@@ -168,7 +169,7 @@ class uBLAS{
                     }
                     int block_start_pos =(r / best_column_nr) * local_size_A[0] *result.column + col_pos;
                     for (int row=0;row<local_size_A[r];row++){
-                        memcpy ( &result.data[(block_start_pos + row * result.column)], &temp[posC[r]+row*local_size_B[r]], sizeof(float)*local_size_B[r]);
+                        memcpy ( &result.data[(block_start_pos + row * result.column)], &copy_area[posC[r]+row*local_size_B[r]], sizeof(float)*local_size_B[r]);
                     }
                 }
             }
@@ -333,8 +334,7 @@ class uBLAS{
                 v.data[i]= v.data[i] - v.get_vector_norm();
 
                 v.normalize_vector();
-                Matrix v_t(v.row,v.column);
-                v_t.clone_data(&v);
+                Matrix v_t = v;
                 v_t.transpose();
                 Matrix outer_product = uBLAS::vectorization_multiply(&v,&v_t);
                 outer_product.const_multiply(2.0);
@@ -345,11 +345,36 @@ class uBLAS{
                 Matrix Q_temp = uBLAS::parallel_multiply(Q,&H, numberOfProcessors, rank);
                 Q->clone_data(&Q_temp);
             }
+        }
 
+        static Matrix richardson_iteration(Matrix* A, Matrix* b){
+            float eps=0.0000001;
+            Matrix x(A->row,1);
+            x.zero();
+            //calculate w precondidioner for A matrix to converge --> ||I-wA||<1
+            float w = 1.0 / (0.1+ A->get_vector_norm());
+
+            int iteration=0; 
+            while(iteration<10000){
+                Matrix gaxpy=uBLAS::vectorization_multiply(A,&x);
+                Matrix add_part = (*b)-gaxpy;
+                add_part.const_multiply(w);
+                Matrix x_temp = x+add_part;
+                x.clone_data(&x_temp);
+                
+                Matrix add_part_T =add_part;
+                add_part_T.transpose();
+                float error=uBLAS::vectorization_multiply(&add_part_T,&add_part).get(0,0)*(1.0/w);
+                if (error<eps){
+                    return x;
+                }
+                iteration++;
+            }
+            return x;
         }
 
         static Matrix jacobi_iteration(Matrix* A, Matrix* b){
-            float eps=0.0000001;
+            float eps=0.00000001;
             //optimize for sparse diagonal inverse
             float D_1[A->row];
             for (int i = 0;i < A->row;i++){
@@ -358,15 +383,14 @@ class uBLAS{
             Matrix x(A->row,1);
             x.zero();
 
-            Matrix LU(A->row,A->column);
-            LU.clone_data(A);
+            Matrix LU = (*A);
             for (int i = 0;i < A->row;i++){
                 LU.set(i,i,0.0) ;
             }
 
             int iteration=0;
             bool need_iter=true;
-            while(iteration<1000 && need_iter){
+            while(iteration<10000 && need_iter){
                 need_iter=false;
                 Matrix temp = uBLAS::vectorization_multiply(&LU, &x);
                 for (int i=0;i<b->row;i++){
@@ -389,8 +413,7 @@ class uBLAS{
             int iteration=0;
             while(iteration<2000){
                 Matrix d = (*b)-uBLAS::vectorization_multiply(A, &x);
-                Matrix d_t(A->row,1);
-                d_t.clone_data(&d);
+                Matrix d_t =d;
                 d_t.transpose();
                 //calculate stepsize
                 Matrix temp = uBLAS::vectorization_multiply(A, &d);
@@ -416,19 +439,16 @@ class uBLAS{
         }
 
         static Matrix conjugate_gradient_method(Matrix* A, Matrix* b){
-            float eps=0.0001;
+            float eps=0.00001;
             Matrix x(A->row,1);
             x.zero();
             Matrix p =(*b)-uBLAS::vectorization_multiply(A, &x);
-            Matrix r(p.row,p.column);
-            r.clone_data(&p);
+            Matrix r = p;
             int iteration=0;
             while(iteration<1000){
-                Matrix p_t(p.row,1);
-                p_t.clone_data(&p);
+                Matrix p_t = p;
                 p_t.transpose();
-                Matrix r_t(r.row,1);
-                r_t.clone_data(&r);
+                Matrix r_t = r;
                 r_t.transpose();
                 float nominator = uBLAS::vectorization_multiply(&r_t,&r).get(0,0);
                 Matrix temp = uBLAS::vectorization_multiply(A, &p);
@@ -453,8 +473,257 @@ class uBLAS{
 
             }
             return x;
-
         }
+        
+    static float max_eig(Matrix* A, Matrix* eig_vector){
+        float eps=0.0001;
+        if (A->column!=A->row){
+                throw std::invalid_argument("eigenvalues search works only for square matrix");
+        }
+        eig_vector->init_random();
+        int iteration=0;
+        bool close = false;
+        float eig_val =0.0;
+        while (iteration<10000 && close==false){
+            eig_vector->normalize_vector();
+            Matrix out = uBLAS::vectorization_multiply(A,eig_vector);
+            //check distance
+            eig_val = out.get(0,0)/eig_vector->get(0,0);
+            eig_vector->const_multiply(eig_val);
+            if (eig_vector->equals(&out,eps)){
+                close=true;
+            }
+            eig_vector->clone_data(&out);
+
+            iteration++;
+        }
+        return eig_val;
+    }
+
+    //need symetric matrix--> return eig values
+    //in case of multi process mode: #of cols/rows must be n*(#processor*2)
+    static Matrix eig_jacobi(Matrix* A, int numberOfProcessors, int rank){
+        float eps=0.01;
+        if (A->column!=A->row){
+            throw std::invalid_argument("eigenvalues search works only for square matrix");
+        }
+
+        Matrix m = *A;
+        //send the data to every: proc->PROC0 is the main node
+        if (numberOfProcessors>0)
+            MPI_Bcast(m.data,A->row*A->column,MPI_FLOAT,0,MPI_COMM_WORLD);
+
+        //determine the current frobeneus norm of the A matrix
+        float original_norm= m.get_vector_norm();
+
+        int iteration = 0;
+        bool done =false;
+        while (iteration < 5000 && !done){
+            //single core
+            if (numberOfProcessors==1){
+                for (int x=0;x<m.row-1;x++){
+                    for (int y=x+1;y<m.column;y++){
+                        float t = uBLAS::givens_rotation_left(&m,x,y);
+                        uBLAS::givens_rotation_right(&m,x,y,t);
+                    }
+                }
+            }
+            //multi processor 
+            else{
+                assert(A->row %(numberOfProcessors*2)==0);
+                //set pairing list
+                int pairing[A->row];
+                for (int i=0;i<A->row;i++)
+                    pairing[i]=i;
+                
+                for (int inner_iter =0;inner_iter<A->row-1;inner_iter++){
+                    int pair_from=A->row/numberOfProcessors*rank;
+                    int pair_to=A->row/numberOfProcessors*(rank+1)-1;    
+
+                    float send_collected_modification[A->row*(pair_to-pair_from+1)];
+                    float t[(pair_to-pair_from+1)/2];
+                    for (int i=0;i<(pair_to-pair_from+1)/2;i+=1){
+                        t[i] = uBLAS::givens_rotation_left(&m,pairing[pair_from+i*2],pairing[pair_from+i*2+1]);
+                        //collect data for sending
+                        for (int j=0;j<A->column;j++){
+                            send_collected_modification[i*2*A->row+j]=m.get(pairing[pair_from+i*2],j);
+                            send_collected_modification[(i*2+1)*A->row+j]=m.get(pairing[pair_from+i*2+1],j);
+                        }
+                    }
+                    uBLAS::data_broadcast_eig(&m, send_collected_modification, pairing, pair_from, pair_to, store_style::row, numberOfProcessors, rank);
+                    for (int i=0;i<(pair_to-pair_from+1)/2;i++){
+                        uBLAS::givens_rotation_right(&m,pairing[pair_from+i*2],pairing[pair_from+i*2+1],t[i]);
+                        //collect data for sending
+                        for (int j=0;j<A->column;j++){
+                            send_collected_modification[i*2*A->row+j]=m.get(j,pairing[pair_from+i*2]);
+                            send_collected_modification[(i*2+1)*A->row+j]=m.get(j,pairing[pair_from+i*2+1]);
+                        }
+                    }
+                    uBLAS::data_broadcast_eig(&m, send_collected_modification, pairing, pair_from, pair_to, store_style::column, numberOfProcessors, rank);                 
+                    //step pairing
+                    //lower row
+                    int left_lower=pairing[1];
+                    for(int i=1;i<A->row-2;i+=2){
+                        pairing[i]=pairing[i+2];
+                    }
+                    pairing[A->row-1]=pairing[A->row-2];
+                    //upper row
+                    for(int i=A->row-2;i>2;i-=2){
+                        pairing[i] = pairing[i-2];
+                    }
+                    pairing[2]=left_lower;
+                }
+            }
+            if (original_norm-m.get_diagonal_norm()<eps) 
+                done=true;
+            iteration++;
+        }
+        Matrix eig_values(A->row,1);
+        for (int i=0;i<A->row;i++){
+            eig_values.set(i,0,m.get(i,i));
+        }
+        return eig_values;
+    }
+
+    static Matrix eig_vectors_from_eig_vals(Matrix* A, Matrix* eig_values, int numberOfProcessors, int rank){
+        if (numberOfProcessors>1)
+            MPI_Bcast(A->data,A->row*A->column,MPI_FLOAT,0,MPI_COMM_WORLD);
+
+        Matrix eig_vectors(A->row,A->row);
+        if (A->row==1){
+            eig_vectors.set(0,0,1.0);
+            return eig_vectors;
+        }      
+        Matrix zero_vec(A->row,1);
+        zero_vec.zero();
+        
+        //single process
+        if (numberOfProcessors==1){ 
+            for (int i=0;i<A->row;i++){
+                //calculate eig vectors
+                Matrix eig_A = *A;
+                for (int j=0;j<A->row;j++){
+                    eig_A.set(j,j,eig_A.get(j,j)- eig_values->get(i,0));
+                }
+                //modify a to avoid trivial solution: push away from zero solution
+                zero_vec.set(0,0,0.004);
+                Matrix eig_vec = uBLAS::conjugate_gradient_method(&eig_A,&zero_vec);
+                //copy vector to the matrix
+                for (int j=0;j<eig_vec.row;j++){
+                    eig_vectors.set(j,i,eig_vec.get(j,0));
+                }
+            }
+        }
+        else{
+            int count[numberOfProcessors];
+            int pos[numberOfProcessors];
+            for (int i=0;i<numberOfProcessors-1;i++){
+                count[i]=(A->row/numberOfProcessors);
+                pos[i]=count[i]*i;
+            }
+            count[numberOfProcessors-1]=A->row - (A->row/numberOfProcessors)*(numberOfProcessors-1);
+            pos[numberOfProcessors-1]=A->row-count[numberOfProcessors-1];
+
+            //scatter eig_values
+            float eig_vals[count[rank]];
+
+            MPI_Scatterv(eig_values->data, count, pos, MPI_FLOAT,eig_vals, count[rank], MPI_FLOAT,0, MPI_COMM_WORLD);
+            Matrix out(A->row,count[rank]);
+            out.storing=store_style::column;
+            eig_vectors.storing=store_style::column;
+            for (int i=0;i<count[rank];i++){
+                //calculate eig vectors
+                Matrix eig_A = *A;
+                for (int j=0;j<A->row;j++){
+                    eig_A.set(j,j,eig_A.get(j,j)- eig_vals[i]);
+                }
+                //modify a to avoid trivial solution: push away from zero solution
+                zero_vec.set(0,0,0.004);
+                Matrix eig_vec = uBLAS::conjugate_gradient_method(&eig_A,&zero_vec);
+                //copy vector to the matrix
+                for (int j=0;j<eig_vec.row;j++){
+                    out.set(j,i,eig_vec.get(j,0));
+                }
+            }
+            for (int i=0;i<numberOfProcessors;i++){
+                count[i]*=A->row;
+                pos[i]*=A->row;
+            }
+            
+            MPI_Gatherv(out.data, count[rank], MPI_FLOAT,eig_vectors.data, count, pos, MPI_FLOAT, 0, MPI_COMM_WORLD);
+        }
+
+
+        return eig_vectors;
+    }
+
+private:
+    static void data_broadcast_eig(Matrix* A, float* send_collected_modification,int* pairing,int pair_from, int pair_to, store_style store_alignment, int numberOfProcessors, int rank){
+        float recv_collected_modification[A->row*A->row];
+        //communication parameters
+        int amount_of_data_each_process[numberOfProcessors];
+        int start_pos [numberOfProcessors];
+        for (int i=0;i<numberOfProcessors;i++){
+            amount_of_data_each_process[i]=A->row*A->row/numberOfProcessors;
+            start_pos[i]=amount_of_data_each_process[i]*i;
+        }
+        MPI_Gatherv(send_collected_modification, A->row*(pair_to-pair_from+1), MPI_FLOAT,recv_collected_modification, amount_of_data_each_process, start_pos,MPI_FLOAT, 0, MPI_COMM_WORLD);
+        //recover the matrix
+        if (rank==0){
+            for (int i=0;i<A->row;i++){
+                for (int j=0;j<A->column;j++){
+                    if (store_alignment==store_style::row)
+                        A->set(pairing[i],j,recv_collected_modification[i*A->row+j]);
+                    else
+                        A->set(j,pairing[i],recv_collected_modification[i*A->row+j]);
+                }
+            }
+        }
+        MPI_Bcast(A->data,A->row*A->column,MPI_FLOAT,0,MPI_COMM_WORLD);
+
+    }
+
+    //Do left Givens rotation in place -> G_T * A
+    static float givens_rotation_left(Matrix* a, int i, int j){
+        if (i>=a->row || j>=a->row || a->row!=a->column || i<0 || j<0){
+            throw std::invalid_argument("wrong parameters for Givens rotation");
+        }
+        float teta = (a->get(j,j) - a->get(i,i)) / (2*a->get(i,j));
+        float t =  1.0/(abs(teta) + sqrt(1+teta*teta));
+        if (teta<0)
+            t=-t;
+        float cos_teta = 1.0/(sqrt(t*t+1));
+        float sin_teta = cos_teta*t;
+        Matrix temp(a->row,2);
+        for (int k=0;k<a->column;k++){
+            temp.set(k,0,cos_teta*a->get(i,k) - sin_teta*a->get(j,k));
+            temp.set(k,1,cos_teta*a->get(j,k) + sin_teta*a->get(i,k));
+        }
+        for (int k=0;k<a->column;k++){
+            a->set(i,k,temp.get(k,0));
+            a->set(j,k,temp.get(k,1));
+        }
+        return t;
+    }
+
+    //Do right Givens rotation in place -> A * G
+    static void givens_rotation_right(Matrix* a, int i, int j, float t){
+        if (i>=a->row || j>=a->row || a->row!=a->column || i<0 || j<0){
+            throw std::invalid_argument("wrong parameters for Givens rotation");
+        }
+        float cos_teta = 1.0/(sqrt(t*t+1));
+        float sin_teta = cos_teta*t;
+        Matrix temp(a->row,2);
+        for (int k=0;k<a->column;k++){
+            temp.set(k,0,cos_teta*a->get(k,i) - sin_teta*a->get(k,j));
+            temp.set(k,1,cos_teta*a->get(k,j) + sin_teta*a->get(k,i));
+        }
+        for (int k=0;k<a->column;k++){
+            a->set(k,i,temp.get(k,0));
+            a->set(k,j,temp.get(k,1));
+        }
+
+    }
 
 };
 

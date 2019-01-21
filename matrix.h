@@ -98,12 +98,10 @@ class Matrix{
             this->row = this->column;
             this->column = temp;
         }
-
-        bool equals(Matrix* b){
+        bool equals(Matrix* b,float eps){
             if ((this->row != b->row) || (this->column != b->column)){
                 return false;
             }
-            float eps = 0.5;
             for (int i=0;i<this->row;i++){
                 for(int j=0;j<this->column;j++){
                     if (abs(this->get(i,j)-b->get(i,j))>eps){
@@ -114,9 +112,20 @@ class Matrix{
             return true;
         }
 
+        bool equals(Matrix* b){
+            return this->equals(b,0.5);
+        }
+
         void zero(){
             for (int i=0;i<this->row*this->column;i++){
                 this->data[i] = 0.0;
+                
+            }
+        }
+
+        void ones(){
+            for (int i=0;i<this->row*this->column;i++){
+                this->data[i] = 1.0;
                 
             }
         }
@@ -206,6 +215,19 @@ class Matrix{
             return vec_len;
         }
 
+        float get_diagonal_norm(){
+            float diagonal_sum=0;
+            int limit=0;
+            if (this->row<this->column)
+                limit = this->row;
+            else
+                limit = this->column;
+            for (int i=0;i<limit;i++)
+                diagonal_sum+=this->get(i,i)*this->get(i,i);
+
+            return sqrt(diagonal_sum);
+        }
+
         ///make vector norm 1 in place
         void normalize_vector(){
             float vec_len= this->get_vector_norm();
@@ -218,6 +240,13 @@ class Matrix{
         void const_multiply(const float alpha){
             for(int k=0;k<this->row*this->column;k++){
                 this->data[k]*=alpha;
+            }
+        }
+
+        //in place: A=alpha+A
+        void const_add(const float alpha){
+            for(int k=0;k<this->row*this->column;k++){
+                this->data[k]+=alpha;
             }
         }
 
