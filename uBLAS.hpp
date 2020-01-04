@@ -169,7 +169,7 @@ class uBLAS{
                     }
                     int block_start_pos =(r / best_column_nr) * local_size_A[0] *result.column + col_pos;
                     for (int row=0;row<local_size_A[r];row++){
-                        memcpy ( &result.data[(block_start_pos + row * result.column)], &copy_area[posC[r]+row*local_size_B[r]], sizeof(float)*local_size_B[r]);
+                        std::memcpy ( &result.data[(block_start_pos + row * result.column)], &copy_area[posC[r]+row*local_size_B[r]], sizeof(float)*local_size_B[r]);
                     }
                 }
             }

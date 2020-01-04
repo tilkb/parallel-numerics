@@ -47,37 +47,51 @@ mpirun -np <#ofprocesses> ./main`
 ## Results
 
 ### Matrix multiplication
-| Method | Time (s) |
+| Method |Machine1 Time (s) |Machine2 Time (s)
+|--------|------|------|
+|Naive |5.17615|2.29718|
+|Memory optimized|3.18421|1.73342|
+|Vectorized operators|0.42464|0.236444|
+|Multi process|0.256438|0.102113|
+
+### GPU optimized matrix multiplication 
+The code is optimized for Nvidia MX150
+
+| Method |Time (s) |
 |--------|------|
-|Naive |5.17615|
-|Memory optimized|3.18421|
-|Vectorized operators|0.42464|
-|Multi process|0.256438|
+|Naive |0.125388|
+|ROw in shared memory|0.055226|
+|Block optimized|0.036619|
+|Block optimized with async data streaming|0.035769|
+
+Async data copy can be seen on this figure:
+![alt text](img/async.png "Image from profiler")
+
 
 ### Matrix decomposition
 
-|Method|Time (s)|
-|------|----|
-|Naive LU decomposition|0.728499|
-|Gaxpy sequential LU decomposition|0.715269|
-|Multi process LU|0.306526|
-|Naive QR decomposition (Gram–Schmidt) | 5.08438 |
-|Naive Hausholder QR decomposition (smaller matrix) |16.4703|
+| Method |Machine1 Time (s) |Machine2 Time (s)
+|------|----|------|
+|Naive LU decomposition|0.728499|0.350948|
+|Gaxpy sequential LU decomposition|0.715269|0.341812|
+|Multi process LU|0.306526|0.103951|
+|Naive QR decomposition (Gram–Schmidt) | 5.08438 |1.86334|
+|Naive Hausholder QR decomposition (smaller matrix) |16.4703|17.0201|
 
 ### Iterative solvers
-|Method|Time (s)|
-|------|----|
-|Richardson iteration|0.389017|
-|Jacobi iteration|0.000273|
-|Gradient method|0.145374|
-|Conjugate gradient method|0.002271|
+| Method |Machine1 Time (s) |Machine2 Time (s)
+|------|----|------|
+|Richardson iteration|0.389017|0.587187|
+|Jacobi iteration|0.000273|0.00049|
+|Gradient method|0.145374|0.188615|
+|Conjugate gradient method|0.002271|0.004664|
 
 ### Eigen value problems
-|Method|Time (s)|
-|------|----|
-|Find maximal eigenvalue with eigenvector|0.000307|
-|Eigenvalues with Givens rotation|1.46753|
-|Parallel running|2.68838|
-|Eigenvectors from eigenvalues|1.20246| 
-|Parallel running|0.460136|
+| Method |Machine1 Time (s) |Machine2 Time (s)
+|------|----|------|
+|Find maximal eigenvalue with eigenvector|0.000307|0.000382|
+|Eigenvalues with Givens rotation|1.46753|1.73137|
+|Parallel running|2.68838|1.49575|
+|Eigenvectors from eigenvalues|1.20246| 2.19577|
+|Parallel running|0.460136|0.725736|
 

@@ -2,10 +2,19 @@
 #include <vector>
 #include <random>
 #include <stdexcept>
+#include <cstring>
 
 enum store_style {row, column};
 //Sequential implementation of matrix operations.
 class Matrix{
+    float* allocate(int size){
+        #if (defined(__CUDACC__))
+            return new float[size];
+        #else
+            return static_cast<float*>(_mm_malloc(sizeof(float) * size, 32));  //direct access can make it faster... need for Intel vector operations
+        #endif
+    }
+
     public:
         int row;
         int column;
@@ -15,7 +24,7 @@ class Matrix{
             this->row = row;
             this->column = column;
             //provide 32 bit alignment
-            this->data = static_cast<float*>(_mm_malloc(sizeof(float) * row*column , 32));  //direct access can make it faster... need for Intel vector operations
+            this->data = this->allocate(row*column);
             this->storing = store_style::row;
         };
 
@@ -23,14 +32,14 @@ class Matrix{
             this->row = m.row;
             this->column = m.column;
             this->storing = m.storing;
-            this->data = static_cast<float*>(_mm_malloc(sizeof(float) * m.row*m.column , 32));  
+            this->data = this->allocate(row*column);
             memcpy ( this->data, m.data, sizeof(float)*m.row*m.column);
             this->storing = store_style::row;
         }
 
         void modify_storing_style(store_style store){
             if (this->storing == store_style::row  && store == store_style::column){
-                float* new_array = static_cast<float*>(_mm_malloc(sizeof(float) * this->row*this->column , 32));
+                float* new_array = this->allocate(this->row*this->column);
                 this->storing = store_style::column;
                 for(int i=0;i<this->row;i++){
                     for (int j=0;j<this->column;j++){
@@ -41,7 +50,7 @@ class Matrix{
                 this->data = new_array;
             }
             else if(this->storing == store_style::column  && store == store_style::row){
-                float* new_array = static_cast<float*>(_mm_malloc(sizeof(float) * this->row*this->column , 32));
+                float* new_array =this->allocate(this->row*this->column);
                 this->storing = store_style::row;
                 for(int i=0;i<this->row;i++){
                     for (int j=0;j<this->column;j++){
@@ -130,7 +139,7 @@ class Matrix{
             }
         }
         void clone_data(Matrix* from){
-            memcpy(this->data,from->data,sizeof(float)*this->row*this->column);
+            std::memcpy(this->data,from->data,sizeof(float)*this->row*this->column);
             this->storing=from->storing;
         }
         void set_subMatrix(int row_from, int column_from, Matrix* submatrix){
